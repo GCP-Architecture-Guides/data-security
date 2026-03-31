@@ -1,0 +1,16 @@
+# Copy to terraform.tfvars and fill in your values (never commit terraform.tfvars).
+#
+#   cp terraform.tfvars.example terraform.tfvars
+
+project_id            = "your-gcp-project-id"
+organization_id       = "your-organization-id"
+allowed_user_identity = "presenter@example.com"
+
+# Optional: folder containing the project, for KMS Autokey (matches google_kms_autokey_config in kms.tf).
+# Omit or set null to skip Autokey folder config.
+folder_id = null
+
+# true = create a new org-level Access Context Manager policy for this PoC.
+# false = use an existing policy and set access_policy_id.
+create_access_policy = true
+access_policy_id     = ""
