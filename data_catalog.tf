@@ -7,7 +7,7 @@ resource "google_data_catalog_taxonomy" "data_sensitivity" {
   provider     = google-beta
   project      = var.project_id
   region       = local.datacatalog_region
-  display_name = "Data Sensitivity taxonomy"
+  display_name = "Data Sensitivity taxonomy${var.project_id}"
   description  = "Taxonomy for defining data sensitivity levels in the PoC"
 
   activated_policy_types = ["FINE_GRAINED_ACCESS_CONTROL"]
