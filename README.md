@@ -57,7 +57,7 @@ Use this section if you are cloning the repository into a **new** GCP organizati
 
 ### Configure variables
 
-1. `git clone <your-fork-or-repo-url>` and `cd` into the directory.
+1. `git clone https://github.com/GCP-Architecture-Guides/data-security.git` and `cd` into the directory 'data-security'.
 2. Copy the example tfvars and edit values:
 
    ```bash
@@ -65,6 +65,11 @@ Use this section if you are cloning the repository into a **new** GCP organizati
    ```
 
 3. Set at minimum **`project_id`**, **`organization_id`**, and **`allowed_user_identity`**. **`project_id` has no default** in [variables.tf](variables.tf); Terraform will error until it is set.
+
+```bash
+  # set the create_access_policy = true (default) #create a new org-level Access Context Manager policy for this PoC, if set to false, then provide the existing access policy id
+  # access_policy_id     = "XXXX"
+   ```
 
 ### Authenticate
 
