@@ -97,6 +97,7 @@ Review the plan carefully: this PoC creates a **VPC-SC perimeter**, modifies **o
 From the repository root (with `terraform.tfstate` present):
 
 ```bash
+chmod +x /scripts/setup_demo_data.sh
 ./scripts/setup_demo_data.sh
 ```
 
