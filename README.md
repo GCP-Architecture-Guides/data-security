@@ -184,13 +184,13 @@ Follow this sequence after **`terraform apply`** and optionally **`./scripts/set
 - Log into the GCP Console as **`allowed_user_identity`** for phases that require policy-tag visibility or KMS-backed DLP in BigQuery.
 - Collect and save the names once:
 
-  ```bash
+```bash
 echo "project_id: $(terraform output -raw project_id)"
 echo "public_permissive_bucket: $(terraform output -raw public_permissive_bucket)"
 echo "raw_ingestion_bucket: $(terraform output -raw raw_ingestion_bucket)"
 echo "bigquery_dataset_id: $(terraform output -raw bigquery_dataset_id)"
 echo "bigquery_dlp_tokenized_view: $(terraform output -raw bigquery_dlp_tokenized_view)"
-  ```
+```
 
   Buckets look like `public-permissive-demo-XXXXXXXX` and datasets like `secure_data_warehouse_XXXXXXXX`.
 
