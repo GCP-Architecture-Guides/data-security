@@ -6,6 +6,23 @@ This repository contains a Terraform module to deploy the **"Secure Data: The In
 
 Standard identity-based access control (IAM) is not enough to secure critical data. If a developer accidentally grants public access to a bucket or table, the data is exposed. This architecture addresses that risk head-on by creating hard network perimeters that explicitly **override** permissive IAM settings.
 
+### Single project and Autokey
+
+Everything uses **`project_id`** only. With **`folder_id`** set, [`google_kms_autokey_config`](kms.tf) enables **delegated** Autokey: **`key_project_resolution_mode = "RESOURCE_PROJECT"`** (no separate **`key_project`**). Per Google’s **delegated key management** model ([Preview](https://cloud.google.com/products#product-launch-stages)), Autokey provisions CMEK **in the same project** as the protected resource.
+
+When **`folder_id`** is set, [`autokey_keyhandles.tf`](autokey_keyhandles.tf) creates **`google_kms_key_handle`** resources (**`google-beta`**) for the warehouse dataset, SecOps dataset, and both GCS buckets, and wires **`default_encryption_configuration`** / bucket **`encryption`** to each handle’s **`kms_key`**. Set **`folder_id = null`** to skip Autokey and KeyHandles (BQ/GCS stay Google-managed). The **`pii_dlp_tokenized`** view still uses its **own** explicit CMEK in **`project_id`** ([`bigquery_dlp_tokenization.tf`](bigquery_dlp_tokenization.tf)). See [Enable Autokey](https://cloud.google.com/kms/docs/enable-autokey#delegated_key_management_with_terraform) and [Create protected resources](https://cloud.google.com/kms/docs/create-resource-with-autokey).
+
+| Encryption (when **`folder_id`** is set) | What Terraform does |
+|------------------------------------------|---------------------|
+| **`secure_data_warehouse_*`** & **`secops_dashboard_*`** datasets | Default **CMEK** via Autokey KeyHandles (keys under `keyRings/autokey/...` in **`project_id`**) |
+| **Raw** & **public demo** GCS buckets | Default **CMEK** via Autokey KeyHandles (same project) |
+| **`pii_dlp_tokenized`** view | **Separate** CMEK ring/key in **`project_id`** ([`bigquery_dlp_tokenization.tf`](bigquery_dlp_tokenization.tf)), not Autokey |
+| VPC-SC perimeter | Protects **`project_id`** only (single-project PoC) |
+
+**Apply order:** [`demo_seed.tf`](demo_seed.tf) uploads [`fixtures/sample_pii_data.csv`](fixtures/sample_pii_data.csv) to both buckets and runs a **`google_bigquery_job`** load **before** [`google_access_context_manager_service_perimeter.invisible_boundary`](vpc_sc.tf) is created, so seeding does not run into VPC-SC. Folder Autokey ([`kms.tf`](kms.tf)) is **not** blocked on the perimeter for the same reason.
+
+Removing KeyHandles from Terraform **does not delete** them in GCP; see [Cleanup](#cleanup).
+
 ## Usecases & Industry Context
 
 Organizations frequently struggle with "shadow data"—sensitive information scattered across cloud environments. This architecture is vital for heavily regulated industries such as **Healthcare, Finance, and Retail**, where compromised credentials or accidental misconfigurations pose severe business and legal risks.
@@ -20,7 +37,7 @@ Organizations frequently struggle with "shadow data"—sensitive information sca
 
 - **Zero-Trust Network Enforcement**: The network boundary actively overrides identity permissions. If a bucket is maliciously or accidentally made public, **VPC Service Controls ensures the data remains entirely inaccessible** to unapproved networks/devices/identities.
 - **Automated Discovery**: Cloud DLP continuously discovers, classifies, and auto-tags PII across unstructured datasets without requiring full database scans, optimizing discovery costs.
-- **Hands-Free Encryption**: Cloud KMS Autokey eliminates manual toil by automating the creation, assignment, and rotation of encryption keys across services before they handle data.
+- **Autokey on folder**: With **`folder_id`** set, [folder Autokey](kms.tf) uses **delegated** **`RESOURCE_PROJECT`** mode; [KeyHandles](autokey_keyhandles.tf) add **Autokey CMEK** on warehouse **BigQuery** / **GCS** in **`project_id`**. **`pii_dlp_tokenized`** uses a **separate CMEK** in **`project_id`**.
 - **Context-Aware Access**: Allows granular bypasses to the perimeter. For example, a specific verified user identity (e.g., `presenter@your-company.com`) can seamlessly access the data, while blocking other traffic according to your access levels.
 - **Query-Time Tokenization in BigQuery**: A saved **view** (`pii_dlp_tokenized`) uses native [DLP SQL functions](https://cloud.google.com/bigquery/docs/reference/standard-sql/dlp_functions) (`DLP_DETERMINISTIC_ENCRYPT` / `DLP_KEY_CHAIN`) so analysts can run `SELECT *` without pasting long SQL—deterministic tokens interoperable with Cloud DLP (AES-SIV style), separate from policy-tag masking.
 
@@ -28,11 +45,12 @@ Organizations frequently struggle with "shadow data"—sensitive information sca
 
 - **VPC Service Controls (VPC-SC)**: Creates the "invisible vault" around the data.
 - **Cloud Sensitive Data Protection (DLP)**: Inspect and **de-identification templates** for API-driven pipelines (e.g. character masking for SSN/Credit Card in `dlp.tf`), plus BigQuery-side tokenization via the `pii_dlp_tokenized` view (see below).
-- **Cloud Key Management Service (KMS)**: **Autokey** automates CMEK for BigQuery and Cloud Storage; a **dedicated KMS key** in the same region as BigQuery backs `DLP_KEY_CHAIN` for the tokenization view (wrapped DEK is reflected in Terraform state—**treat state as sensitive**).
+- **Cloud Key Management Service (KMS)**: [`google_kms_autokey_config`](kms.tf) with **`key_project_resolution_mode = "RESOURCE_PROJECT"`** when **`folder_id`** is set, plus [`autokey_keyhandles.tf`](autokey_keyhandles.tf) (**`google-beta`**) for BQ/GCS CMEK. **`pii_dlp_tokenized`** uses a **manually provisioned** symmetric key in **`project_id`** ([`bigquery_dlp_tokenization.tf`](bigquery_dlp_tokenization.tf)).
 - **Access Context Manager**: Evaluates the specific context of an access request to determine if traffic can pass the VPC-SC perimeter.
 - **Data Catalog & BigQuery Data Masking**: Applies "Defense in Depth" column-level security based on explicit Policy Tags.
 - **Cloud Logging & BigQuery Log Router**: Routes perimeter violation events directly into a SecOps Dashboard dataset.
 - **BigQuery & Cloud Storage**: The central data repositories secured within the restricted service perimeter.
+- **Demo seed (Terraform)**: Committed CSV in **`fixtures/`** → GCS objects + BigQuery load job, applied **before** the VPC-SC perimeter exists ([`demo_seed.tf`](demo_seed.tf)).
 
 ---
 
@@ -44,32 +62,27 @@ Use this section if you are cloning the repository into a **new** GCP organizati
 
 - A **GCP project** with **billing enabled**, under an **organization** (VPC-SC and some org policies assume org/folder context).
 - Your **Organization ID** (numeric string used in Terraform as `organization_id`).
-- Optional **Folder ID** for [KMS Autokey](kms.tf): set `folder_id` in `terraform.tfvars`. If you set `folder_id = null`, `google_kms_autokey_config` is **not** created (see the `count` in `kms.tf`).
+- Optional **Folder ID** for [KMS Autokey](kms.tf): folder that contains **`project_id`**. Enables delegated Autokey (**`RESOURCE_PROJECT`**) and KeyHandles on BQ/GCS. If `folder_id = null`, Autokey and KeyHandles are skipped.
 - Access Context Manager: either let Terraform **create** a new org-level access policy (`create_access_policy = true`, default) or set `create_access_policy = false` and supply `access_policy_id`.
 - **`allowed_user_identity`**: the demo user’s **email address only** (for example `alice@example.com`). Terraform adds the `user:` prefix in IAM bindings—do **not** include `user:` in `terraform.tfvars`.
 - **IAM for whoever runs `terraform apply`**: the roles listed under [Prerequisites & IAM Permissions](#prerequisites--iam-permissions) (org-level, optional folder Autokey admin, project-level). Typically this is an **admin or CI service account**, not every demo viewer.
 
 ### What you need locally
 
-- [Terraform](https://developer.hashicorp.com/terraform/install) (1.x; tested around 1.8+).
+- [Terraform](https://developer.hashicorp.com/terraform/install) **≥ 1.5** (see `required_version` in [main.tf](main.tf); tested around 1.8+).
 - [Google Cloud SDK](https://cloud.google.com/sdk/docs/install) (`gcloud`) for credentials and for `bq` / `gsutil` in [scripts/setup_demo_data.sh](scripts/setup_demo_data.sh).
 - **Python 3** on your `PATH` as `python3`. `terraform apply` invokes [scripts/dlp_wrapped_ciphertext_to_bq_bytes_literal.py](scripts/dlp_wrapped_ciphertext_to_bq_bytes_literal.py) via the HashiCorp **external** provider when building the BigQuery DLP view.
 
 ### Configure variables
 
-1. `git clone https://github.com/GCP-Architecture-Guides/data-security.git` and `cd` into the directory 'data-security'.
+1. `git clone <your-fork-or-repo-url>` and `cd` into the directory.
 2. Copy the example tfvars and edit values:
 
    ```bash
    cp terraform.tfvars.example terraform.tfvars
    ```
 
-3. Set at minimum **`project_id`**, **`organization_id`**, and **`allowed_user_identity`**. **`project_id` has no default** in [variables.tf](variables.tf); Terraform will error until it is set.
-
-```bash
-  # set the create_access_policy = true (default) #create a new org-level Access Context Manager policy for this PoC, if set to false, then provide the existing access policy id
-  # access_policy_id     = "XXXX"
-   ```
+3. Set at minimum **`project_id`**, **`organization_id`**, and **`allowed_user_identity`**. **`project_id` has no default** in [variables.tf](variables.tf); Terraform will error until it is set. See [terraform.tfvars.example](terraform.tfvars.example) and **[Variables reference](#variables-reference)** for **`folder_id`**, **`vpc_sc_name_suffix`**, etc.
 
 ### Authenticate
 
@@ -84,24 +97,39 @@ For automation, use a service account or Workload Identity instead of user ADC (
 ### Deploy
 
 ```bash
-terraform init    # installs google, google-beta, random, external
+terraform init    # installs google / google-beta (5.x–7.x per constraint), random, external
 terraform plan
 terraform apply
 terraform output
 ```
 
-Review the plan carefully: this PoC creates a **VPC-SC perimeter**, modifies **org/project policies** for the demo (see `iam_policy.tf`), and creates public IAM on a **demo** bucket by design.
+When you are finished, see **[Teardown and local cleanup](#teardown-and-local-cleanup)** (`terraform destroy`, scrubbing local files, org-level artifacts).
 
-### Load synthetic demo data
+Review the plan carefully: with **`enable_public_exposure_demo = true`** (default), this PoC creates a **VPC-SC perimeter**, relaxes **`iam.allowedPolicyMemberDomains`** on the project ([`iam_policy.tf`](iam_policy.tf)), and grants **`allUsers`** on the demo bucket. For a **long-lived or internal** environment without that story, set **`enable_public_exposure_demo = false`**, **`bucket_force_destroy = false`**, and **`bigquery_deletion_protection = true`** in `terraform.tfvars` (see [Variables reference](#variables-reference)).
 
-From the repository root (with `terraform.tfstate` present):
+### QA (local)
+
+From the repo root:
 
 ```bash
-chmod +x /scripts/setup_demo_data.sh
+chmod +x scripts/qa.sh && ./scripts/qa.sh
+```
+
+This runs **`terraform fmt -check`**, **`terraform init`**, **`terraform validate`**, and **`shellcheck`** on shell scripts when `shellcheck` is installed.
+
+### Demo data (included in `terraform apply`)
+
+A **fixed synthetic CSV** ([`fixtures/sample_pii_data.csv`](fixtures/sample_pii_data.csv), 25 rows) is uploaded during apply to **`gs://…/pii/sample_pii_data.txt`** and **`gs://…/exposed/sample_pii_data.txt`**, and loaded into **`pii_dataset`** via **`google_bigquery_job`** ([`demo_seed.tf`](demo_seed.tf)). With **`enable_public_exposure_demo = false`**, the **`exposed/`** object still exists but the bucket stays **private** (no **`allUsers`**). The **VPC-SC service perimeter** is created **only after** those objects and the load job succeed, so you get a **single seamless `terraform apply`** without a manual pre-perimeter seed step.
+
+### Optional: regenerate a larger sample (`setup_demo_data.sh`)
+
+To replace data with **100 randomly generated rows** (writes local `sample_pii_data.txt`, re-uploads, and **`bq load`** from GCS), run from the repo root after apply:
+
+```bash
 ./scripts/setup_demo_data.sh
 ```
 
-This generates `sample_pii_data.txt`, uploads to the raw and “public” buckets (`pii/` and `exposed/` prefixes), and loads into `pii_dataset`.
+Use the same identity you use for Terraform if **VPC-SC** is already enforced. The script loads from **GCS**, not a local file path, for compatibility with the perimeter.
 
 ### Teardown
 
@@ -116,9 +144,16 @@ If **`create_access_policy`** was **true**, Terraform created an **organization-
 | Symptom | What to check |
 |--------|----------------|
 | Google provider auth errors | `gcloud auth application-default login`; quota project / `GOOGLE_APPLICATION_CREDENTIALS` if using a key |
+| **`data.google_project`** **403** / CRM API disabled on a **new** project | Enable **`cloudresourcemanager.googleapis.com`** and **`serviceusage.googleapis.com`** on the project once (e.g. `gcloud services enable cloudresourcemanager.googleapis.com serviceusage.googleapis.com --project=YOUR_PROJECT_ID`), then re-run Terraform. |
 | External / Python errors during apply | `python3 --version`; script path and execute permissions |
 | Permission denied on APIs or IAM | Org/project roles in the next section; billing enabled |
 | DLP / BigQuery region mismatches | Default `region` is `us-central1` in `variables.tf`; taxonomies and DLP templates use that region—change consistently if you change `region` |
+| Access Policy **409** (already exists) | Set **`create_access_policy = false`**, set **`access_policy_id`**, then **`terraform import`** the existing policy and related access level / perimeter if names drift—see **`vpc_sc_name_suffix`** below |
+| Access level or perimeter name mismatch after import | Set **`vpc_sc_name_suffix`** to the suffix in the live resource name (e.g. `corporate_network_SUFFIX`) so Terraform targets the same objects as [vpc_sc.tf](vpc_sc.tf) |
+| **`google_kms_autokey_config`** **403** `VPC_SERVICE_CONTROLS` when changing Autokey | Folder Autokey updates use **`cloudkms.googleapis.com`** and can be blocked under VPC-SC. Apply from an allowed context, temporarily adjust **`restricted_services`** / use **`gcloud kms autokey-config update`**, then **`terraform refresh`**. |
+| **`bq load`** **VPC_SERVICE_CONTROLS** from your laptop | Use [scripts/setup_demo_data.sh](scripts/setup_demo_data.sh) (loads from **GCS** inside the project) or run **`bq`** as an allowed identity; local-file loads often fail under VPC-SC. |
+| **`google_storage_bucket_iam_member`** **412** / “permitted customer” right after apply | Org policy **`iam.allowedPolicyMemberDomains`** can take time to apply before **`allUsers`** bindings; wait and **`terraform apply`** again (or add the binding once policy is effective). |
+| Delegated Autokey / **`RESOURCE_PROJECT`** unavailable | Same-project Autokey is **[Preview](https://cloud.google.com/products#product-launch-stages)**; confirm org eligibility and APIs. If blocked, set **`folder_id = null`** to deploy without Autokey KeyHandles. |
 
 ---
 
@@ -135,73 +170,82 @@ Deploying this PoC requires manipulating Organization Policies, VPC Service Cont
 These must be granted at the Organization node (`organizations/YOUR_ORG_ID`):
 
 - `roles/accesscontextmanager.policyAdmin` (To create the VPC-SC Access Policy, Access Level, and Service Perimeter)
-- `roles/orgpolicy.policyAdmin` (To modify the Organization Policy to actively enforce KMS Autokey and override Domain Restricted Sharing for the public bucket demonstration)
+- `roles/orgpolicy.policyAdmin` (To modify the Organization Policy to override Domain Restricted Sharing for the public bucket demonstration)
 
 #### 2. Folder-Level Roles
 
-- `roles/cloudkms.autokeyAdmin` (To configure the KMS Autokey at the folder level so the project can automatically request keys—only if you set `folder_id`)
+- `roles/cloudkms.autokeyAdmin` (To configure KMS Autokey on the folder—only if you set `folder_id`)
 
 #### 3. Project-Level Roles
 
-These must be granted on **your** target project (`YOUR_PROJECT_ID`):
+On **your project** (`project_id` / `YOUR_PROJECT_ID`):
 
-- `roles/resourcemanager.projectIamAdmin` (To allow Terraform to grant the `cloudkms.admin` role to the Autokey Service Agent)
+- `roles/resourcemanager.projectIamAdmin` (Terraform grants IAM on KMS keys, including the DLP tokenization key)
 - `roles/storage.admin` (To create buckets and manage their immediate IAM policies)
 - `roles/bigquery.admin` (To create datasets, tables, and views—including the DLP tokenization view)
-- `roles/cloudkms.admin` (To create the KMS key ring and crypto key used by `DLP_KEY_CHAIN` in the `pii_dlp_tokenized` view; alternatively a custom role with `cloudkms.keyRings.create`, `cloudkms.cryptoKeys.create`, and IAM bindings on the key)
+- `roles/cloudkms.admin` (DLP tokenization key ring/key in [`bigquery_dlp_tokenization.tf`](bigquery_dlp_tokenization.tf); Autokey-provisioned keys under `keyRings/autokey/` when **`folder_id`** is set; IAM on those keys. Alternatively a custom role with the needed `cloudkms.*` permissions and IAM bindings.)
 - `roles/dlp.admin` (To create the Inspect and De-identification Templates)
 - `roles/datacatalog.admin` (To create the Data Sensitivity Taxonomy and Policy Tags)
 - `roles/logging.configWriter` (To create the Cloud Logging Sink for the SecOps Dashboard)
 
-**BigQuery DLP view users:** Terraform grants `roles/cloudkms.cryptoKeyEncrypterDecrypter` on the tokenization KMS key to `allowed_user_identity`. Anyone else who should run `SELECT` on `pii_dlp_tokenized` needs the same (or equivalent) access on that key **and** BigQuery access to the underlying `pii_dataset` (including Data Catalog fine-grained reader for policy-tagged columns, if applicable).
+**BigQuery warehouse users (when `folder_id` is set):** Terraform grants **`roles/cloudkms.cryptoKeyDecrypter`** on the Autokey warehouse dataset key to **`allowed_user_identity`** so `SELECT` on CMEK-backed tables works. Add the same (or equivalent) on that Autokey key for other analysts.
+
+**BigQuery DLP view users:** Terraform grants **`roles/cloudkms.cryptoKeyEncrypterDecrypter`** on the **DLP tokenization** KMS key to **`allowed_user_identity`**. Anyone else who should run `SELECT` on **`pii_dlp_tokenized`** needs the same (or equivalent) on that key **and** BigQuery access to the underlying **`pii_dataset`** (including Data Catalog fine-grained reader for policy-tagged columns, if applicable).
 
 **Seeing unmasked sensitive columns (`ssn`, `credit_card`) in `pii_dataset`:** In addition to BigQuery dataset access, callers need fine-grained policy-tag visibility—for this PoC, Terraform grants **`allowed_user_identity`** **`roles/datacatalog.categoryFineGrainedReader`** on the taxonomy and **`roles/bigquerydatapolicy.maskedReader`** on the masking policy. See also [Data Catalog fine-grained](https://cloud.google.com/bigquery/docs/column-level-security) and [BigQuery data policies](https://cloud.google.com/bigquery/docs/managed-protector-manage-data-policies).
 
-### Variables Configuration
+### Variables reference
 
-Before deploying, determine the values for the required variables:
-
-- **`project_id`** (required): ID of the GCP project; set in `terraform.tfvars` or `-var`.
-- **`organization_id`**: Your GCP Organization ID.
-- **`access_policy_id`**: The numeric ID of an existing Access Policy, if `create_access_policy` is `false`.
-- **`allowed_user_identity`**: Email of the user allowed through the perimeter for the demo (no `user:` prefix).
-- **`folder_id`** (optional): Folder ID for KMS Autokey; use `null` to skip.
+| Variable | Required | Default / notes |
+|----------|----------|-----------------|
+| **`project_id`** | Yes | GCP project where BigQuery, Storage, DLP, logging, and most resources live. |
+| **`organization_id`** | Yes | Numeric org ID for Access Context Manager and VPC-SC. |
+| **`allowed_user_identity`** | Yes | Demo user email only (no `user:` prefix); used for perimeter ingress and several IAM bindings. |
+| **`region`** | No | `us-central1`; keep DLP, Data Catalog, and KMS key ring aligned if you change it. |
+| **`folder_id`** | No | `null` skips Autokey and KeyHandles. If set, folder Autokey uses **`RESOURCE_PROJECT`** (keys in **`project_id`**) and BQ/GCS get Autokey CMEK via [`autokey_keyhandles.tf`](autokey_keyhandles.tf). |
+| **`vpc_sc_name_suffix`** | No | `null` → suffix matches [`random_id.suffix`](main.tf) (same as bucket/dataset name suffixes). Set explicitly (e.g. after **`terraform import`**) if your live **Access Level** / **Service Perimeter** names use another suffix. |
+| **`create_access_policy`** | No | `true` creates a new org-level access policy; `false` requires **`access_policy_id`**. |
+| **`access_policy_id`** | If not creating | Empty when `create_access_policy = true`; set the numeric policy ID when reusing an existing policy. |
+| **`billing_account_id`** | No | Declared in [variables.tf](variables.tf) for optional extensions; **current root module resources do not reference it**—associate billing in the console or another stack if needed. |
+| **`enable_public_exposure_demo`** | No | `true` (default): relax domain-restricted sharing for the project, grant **`allUsers`** on the demo bucket, and add anonymous **US/CA** to the access level (public HTTPS walkthrough). `false`: keep the demo bucket **private** and tighten the access level to **`allowed_user_identity`** only (baseline CSV is still written under **`exposed/`** for a consistent apply graph). |
+| **`bucket_force_destroy`** | No | `true` (default PoC): allow `terraform destroy` to delete non-empty buckets. `false` recommended for environments where emptying buckets manually is required before destroy. |
+| **`bigquery_deletion_protection`** | No | `false` (default): disposable tables. `true`: API deletion protection on **`pii_dataset`** and **`pii_dlp_tokenized`**. SecOps **`delete_contents_on_destroy`** is disabled when `true` (emptying on destroy). BigQuery **datasets** are not given Terraform `prevent_destroy` here so the root module stays compatible with Terraform versions that disallow variables in `lifecycle` blocks. |
 
 ### Deployment Steps (summary)
 
 1. **Initialize Terraform:** `terraform init`
-2. **Plan / apply** with your `terraform.tfvars` or `-var` flags.
+2. **Plan / apply** with your `terraform.tfvars` or `-var` flags (see [Variables reference](#variables-reference)).
 3. **Outputs:** `terraform output` (includes `bigquery_dlp_tokenized_view`, `kms_dlp_tokenization_key`, bucket names).
+4. **Demo rows** are loaded by apply (see [Demo data](#demo-data-included-in-terraform-apply)). Optionally run **`./scripts/setup_demo_data.sh`** for a larger random sample.
 
 ---
 
 ## PoC walkthrough — detailed steps
 
-Follow this sequence after **`terraform apply`** and optionally **`./scripts/setup_demo_data.sh`**. Replace placeholders using `terraform output`.
+Follow this sequence after **`terraform apply`** ( **`pii_dataset`** and demo GCS objects are already seeded). Replace placeholders using `terraform output`.
 
 ### Before you start
 
 - Log into the GCP Console as **`allowed_user_identity`** for phases that require policy-tag visibility or KMS-backed DLP in BigQuery.
-- Collect and save the names once:
+- Collect names once:
 
-```bash
-echo "project_id: $(terraform output -raw project_id)"
-echo "public_permissive_bucket: $(terraform output -raw public_permissive_bucket)"
-echo "raw_ingestion_bucket: $(terraform output -raw raw_ingestion_bucket)"
-echo "bigquery_dataset_id: $(terraform output -raw bigquery_dataset_id)"
-echo "bigquery_dlp_tokenized_view: $(terraform output -raw bigquery_dlp_tokenized_view)"
-```
+  ```bash
+  terraform output -raw project_id
+  terraform output -raw public_permissive_bucket
+  terraform output -raw raw_ingestion_bucket
+  terraform output -raw bigquery_dataset_id
+  terraform output -raw bigquery_dlp_tokenized_view
+  ```
 
   Buckets look like `public-permissive-demo-XXXXXXXX` and datasets like `secure_data_warehouse_XXXXXXXX`.
 
-### Step A — Seed data (if not done)
+### Step A — Confirm demo data (optional refresh)
 
-Run `./scripts/setup_demo_data.sh` from the repo root. Objects are written to:
-
-- `gs://RAW_BUCKET/pii/sample_pii_data.txt`
-- `gs://PUBLIC_BUCKET/exposed/sample_pii_data.txt`
+**`terraform apply`** already seeds **`pii_dataset`** and both bucket paths from [`fixtures/sample_pii_data.csv`](fixtures/sample_pii_data.csv). To refresh with **100 random rows**, run `./scripts/setup_demo_data.sh`.
 
 ### Step B — Phase 2–3: Public bucket and VPC-SC block
+
+Skip this step if **`enable_public_exposure_demo`** is **`false`** (no **`allUsers`**, no anonymous **US/CA** clause in the access level; the **`exposed/`** object may still exist but is not publicly readable).
 
 1. In the Console open **Cloud Storage** → bucket **`public-permissive-demo-...`**.
 2. Open the **Permissions** tab. Show that **`allUsers`** has **Storage Object Viewer** (intentionally dangerous IAM for the story).
@@ -213,13 +257,13 @@ Run `./scripts/setup_demo_data.sh` from the repo root. Objects are written to:
 
 ### Step C — Phase 4: Approved access
 
-On a trusted path (e.g. presenter laptop in **US/CA** or as **`allowed_user_identity`** per your access level), open the same URL or download the object from the Console. Expect **successful** access.
+On a trusted path, open the same URL or download the object from the Console. With the default demo access level, **US/CA** anonymous access or **`allowed_user_identity`** can succeed; with **`enable_public_exposure_demo = false`**, only **`allowed_user_identity`** (and other IAM you add) applies.
 
-### Step D — Phase 5: KMS Autokey (BigQuery)
+### Step D — Phase 5: Encryption (Autokey context)
 
 1. Open **BigQuery** → your project → dataset **`secure_data_warehouse_...`**.
-2. Open table **`pii_dataset`** → **Details**.
-3. Show **Encryption** / **Customer-managed encryption key** (Autokey-related metadata as shown in the current console).
+2. Open table **`pii_dataset`** → **Details** → **Encryption**.
+3. With **`folder_id`** set, the dataset uses **customer-managed** encryption via **Autokey** (KeyHandle). With **`folder_id = null`**, encryption is **Google-managed**. Show folder **Autokey** config (**delegated** / **`RESOURCE_PROJECT`** when enabled). **`pii_dlp_tokenized`** uses a **separate** customer-managed DLP key (`terraform output -raw kms_dlp_tokenization_key`).
 
 ### Step E — Phase 6: DLP templates and tokenized view
 
@@ -244,7 +288,7 @@ On a trusted path (e.g. presenter laptop in **US/CA** or as **`allowed_user_iden
 
 ### Step G — Phase 8: SecOps dataset
 
-1. In **BigQuery**, open dataset **`secops_dashboard_...`**.
+1. In **BigQuery**, open dataset **`secops_dashboard_...`** (CMEK via Autokey when **`folder_id`** is set).
 2. Inspect tables such as **`cloudaudit_googleapis_com_policy_*`** fed by the logging sink (naming may vary slightly by date).
 
 ### Flow overview
@@ -272,22 +316,20 @@ flowchart LR
 
 ---
 
-## Demo Script: Seeding the Data
+## Demo Script: Optional larger sample (`setup_demo_data.sh`)
 
-To make the demo realistic, this repository includes a Python data generator and a Bash wrapper.
+**Default:** [`demo_seed.tf`](demo_seed.tf) + [`fixtures/sample_pii_data.csv`](fixtures/sample_pii_data.csv) run during **`terraform apply`** (before VPC-SC). No script required for the baseline demo.
+
+**Optional:** Python generates **100** random rows and overwrites the same GCS keys and **`pii_dataset`**:
 
 1. Ensure Python 3 is installed.
-2. From the repository root (where `terraform.tfstate` exists):
+2. From the repository root after **`terraform apply`** (initialized Terraform; local state file or remote backend):
 
    ```bash
    ./scripts/setup_demo_data.sh
    ```
 
-**This script will:**
-
-- Generate `sample_pii_data.txt` (synthetic rows: names, emails, SSNs, card numbers).
-- Upload the file to the `raw-unclassified-ingest-*` and `public-permissive-demo-*` buckets.
-- Load the file into `secure_data_warehouse_*.pii_dataset`.
+**The script** writes gitignored `sample_pii_data.txt`, uploads to both buckets, and **`bq load`** from **`gs://…/pii/sample_pii_data.txt`**.
 
 ---
 
@@ -331,9 +373,9 @@ From an unapproved context, open the object URL; expect **403** / **VPC_SERVICE_
 
 From an approved context (region / identity per your access level and ingress policy), show successful access.
 
-### Phase 5: Hands-Free Encryption (KMS Autokey)
+### Phase 5: Encryption & Autokey
 
-In **BigQuery**, **`pii_dataset`** **Details**: show CMEK / Autokey-related encryption metadata.
+Show **Autokey CMEK** on the warehouse dataset when **`folder_id`** is set (else **Google-managed**), delegated Autokey on the folder, and **customer-managed** **`pii_dlp_tokenized`** (DLP key).
 
 ### Phase 6: Automated Discovery & Tokenization (DLP)
 
@@ -345,7 +387,7 @@ In **BigQuery**, **`pii_dataset`** **Details**: show CMEK / Autokey-related encr
 
 ### Phase 8: SecOps Visibility
 
-**`secops_dashboard_*`** and audit tables for blocked / policy events.
+**`secops_dashboard_*`** (CMEK via Autokey when **`folder_id`** is set) and audit tables for blocked / policy events.
 
 ---
 
@@ -353,9 +395,9 @@ In **BigQuery**, **`pii_dataset`** **Details**: show CMEK / Autokey-related encr
 
 Before making the repo public:
 
-1. **Never commit** `terraform.tfstate`, secrets, or real **`terraform.tfvars`**. This repo’s **`.gitignore`** excludes common Terraform and log patterns; keep **`terraform.tfvars.example`** as the template.
+1. **Never commit** `terraform.tfstate`, secrets, or real **`terraform.tfvars`**. This repo’s **`.gitignore`** excludes common Terraform and log patterns; keep **`terraform.tfvars.example`** as the template. **`fixtures/sample_pii_data.csv`** is **synthetic** demo data (safe to ship); do not replace it with real PII.
 2. Prefer a **remote backend** (GCS or Terraform Cloud) for state in real teams—not local state.
-3. **`git grep`** (or IDE search) for organization IDs, folder IDs, emails, and project IDs in tracked files.
+3. **`git grep`** (or IDE search) for organization IDs, folder IDs, emails, and project IDs in tracked files. Local Autokey patches belong in **`.autokey-config-patch.yaml`** (gitignored); the repo ships **[`autokey-config-patch.example.yaml`](autokey-config-patch.example.yaml)** as a placeholder-only template.
 4. If state or logs **ever** entered Git history, treat resource metadata as exposed; consider **`git filter-repo`** or a fresh repo, and rotate or rebuild sensitive KMS material as appropriate.
 5. This repo ships with the **Apache License 2.0** ([LICENSE](LICENSE)). Optionally add **`SECURITY.md`** for vulnerability reporting.
 
@@ -367,12 +409,26 @@ This project is licensed under the **Apache License, Version 2.0**. See [LICENSE
 
 ---
 
-## Cleanup
+## Teardown and local cleanup
 
-When you are done with the PoC:
+### Destroy infrastructure
+
+From the directory that holds your Terraform configuration and state (same place you ran **`apply`**):
 
 ```bash
 terraform destroy
 ```
 
-Review **VPC Service Controls** / **Access Context Manager** in the console for any org-level artifacts you may want to remove manually depending on how the PoC was applied.
+Review the plan, then confirm. If **`bucket_force_destroy`** was **`false`**, empty buckets (or temporarily set **`force_destroy`**) before destroy succeeds. If **`bigquery_deletion_protection`** was **`true`**, set it back to **`false`** (or drop protection in the console) so tables can be removed.
+
+### After destroy
+
+1. **Org console:** If you used **`create_access_policy = true`**, decide whether to delete the **Access Context Manager** policy, **access levels**, and **service perimeter** created for this PoC (they live under your organization, not only the project).
+2. **Local secrets and IDs:** Remove or never commit **`terraform.tfvars`** (real **`project_id`**, **`organization_id`**, **`folder_id`**, **`allowed_user_identity`**). Prefer **`terraform.tfvars.example`** only in Git.
+3. **State files:** If you used **local state**, you may delete **`terraform.tfstate`** and **`terraform.tfstate*.backup`** after a successful destroy to drop old lineage and outputs from disk; run **`terraform init`** before the next **`apply`**. Remote backends should be emptied or deleted per your team’s policy.
+4. **Generated demo file:** Delete gitignored **`sample_pii_data.txt`** if you ran **`scripts/setup_demo_data.sh`**.
+5. **Autokey patch:** The file **`.autokey-config-patch.yaml`** is **gitignored**—delete it or overwrite from **[`autokey-config-patch.example.yaml`](autokey-config-patch.example.yaml)** so no real folder or project IDs remain on disk.
+
+### GCP leftovers (Autokey / KMS)
+
+**Autokey KeyHandles** and their crypto keys are **not always fully deleted** when Terraform destroys handle resources (GCP may retain keys per product rules). You may need **`terraform state rm`** for stuck handles, or manual cleanup in **Cloud KMS** / support guidance. See [Google’s Autokey Terraform guidance](https://cloud.google.com/kms/docs/create-resource-with-autokey#create-and-destroy-patterns-in-terraform). **CMEK-backed** BigQuery datasets and buckets can block destroy until emptied or encryption is changed—plan teardown accordingly.
