@@ -1,0 +1,4 @@
+# Copy to .autokey-config-patch.yaml (gitignored) for local Autokey console/API workflows.
+# Replace placeholders; do not commit real folder or project IDs.
+name: folders/YOUR_FOLDER_NUMERIC_ID/autokeyConfig
+keyProject: projects/your-key-or-resource-project-id

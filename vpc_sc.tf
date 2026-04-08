@@ -10,12 +10,14 @@ resource "google_access_context_manager_access_policy" "poc_policy" {
 locals {
   # Use the newly created policy ID or fallback to the provided existing one
   policy_id = var.create_access_policy ? "accessPolicies/${google_access_context_manager_access_policy.poc_policy[0].name}" : "accessPolicies/${var.access_policy_id}"
+  # Keep VPC-SC object names aligned with Storage/BQ suffix unless overridden (e.g. after manual drift / import).
+  vpc_sc_suffix = coalesce(var.vpc_sc_name_suffix, random_id.suffix.hex)
 }
 
 # Define an Access Level that permits specific user identity
 resource "google_access_context_manager_access_level" "corporate_network" {
   parent      = local.policy_id
-  name        = "${local.policy_id}/accessLevels/corporate_network_${random_id.suffix.hex}"
+  name        = "${local.policy_id}/accessLevels/corporate_network_${local.vpc_sc_suffix}"
   title       = "Authorized User Identity"
   description = "Access Level to allow traffic from a specific authorized identity."
 
@@ -29,12 +31,15 @@ resource "google_access_context_manager_access_level" "corporate_network" {
       ]
     }
 
-    # Condition 2: Allow anyone (even anonymous browser clicks) if they are in the US or CA.
-    conditions {
-      regions = [
-        "US",
-        "CA"
-      ]
+    # Condition 2 (PoC only): anonymous US/CA — supports the public-URL walkthrough.
+    dynamic "conditions" {
+      for_each = var.enable_public_exposure_demo ? [1] : []
+      content {
+        regions = [
+          "US",
+          "CA"
+        ]
+      }
     }
   }
 
@@ -44,7 +49,7 @@ resource "google_access_context_manager_access_level" "corporate_network" {
 # The VPC Service Controls Perimeter
 resource "google_access_context_manager_service_perimeter" "invisible_boundary" {
   parent         = local.policy_id
-  name           = "${local.policy_id}/servicePerimeters/secure_data_perimeter_${random_id.suffix.hex}"
+  name           = "${local.policy_id}/servicePerimeters/secure_data_perimeter_${local.vpc_sc_suffix}"
   title          = "Secure Data - The Invisible Boundary"
   description    = "VPC Service Controls Perimeter securing BigQuery, Cloud Storage, KMS, and DLP."
   perimeter_type = "PERIMETER_TYPE_REGULAR"
@@ -89,6 +94,9 @@ resource "google_access_context_manager_service_perimeter" "invisible_boundary" 
 
   depends_on = [
     google_project_service.required_apis,
-    google_access_context_manager_access_level.corporate_network
+    google_access_context_manager_access_level.corporate_network,
+    google_storage_bucket_object.demo_pii_raw,
+    google_storage_bucket_object.demo_pii_public,
+    google_bigquery_job.demo_seed_pii,
   ]
 }

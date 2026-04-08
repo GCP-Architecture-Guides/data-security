@@ -55,7 +55,7 @@ resource "google_bigquery_table" "pii_dlp_tokenized" {
   dataset_id = google_bigquery_dataset.secure_data_warehouse.dataset_id
   table_id   = "pii_dlp_tokenized"
 
-  deletion_protection = false
+  deletion_protection = var.bigquery_deletion_protection
 
   view {
     use_legacy_sql = false

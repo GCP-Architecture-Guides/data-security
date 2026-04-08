@@ -27,3 +27,8 @@ output "kms_dlp_tokenization_key" {
   description = "Cloud KMS key used by DLP_KEY_CHAIN in the pii_dlp_tokenized view (same region as BigQuery)"
   value       = google_kms_crypto_key.dlp_bq.id
 }
+
+output "enable_public_exposure_demo" {
+  description = "Whether intentional public bucket IAM, org policy relaxation, and anonymous US/CA access level were applied"
+  value       = var.enable_public_exposure_demo
+}

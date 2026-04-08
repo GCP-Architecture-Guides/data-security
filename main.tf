@@ -1,12 +1,14 @@
 terraform {
+  required_version = ">= 1.5.0"
+
   required_providers {
     google = {
       source  = "hashicorp/google"
-      version = ">= 5.0.0"
+      version = ">= 5.0.0, < 8.0.0"
     }
     google-beta = {
       source  = "hashicorp/google-beta"
-      version = ">= 5.0.0"
+      version = ">= 5.0.0, < 8.0.0"
     }
     random = {
       source  = "hashicorp/random"
@@ -57,5 +59,12 @@ resource "random_id" "suffix" {
   byte_length = 4
   keepers = {
     project_id = var.project_id
+  }
+}
+
+check "access_policy_id_when_reusing_policy" {
+  assert {
+    condition     = var.create_access_policy || length(trimspace(var.access_policy_id)) > 0
+    error_message = "When create_access_policy is false, set access_policy_id to your numeric Access Context Manager policy ID."
   }
 }

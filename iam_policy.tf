@@ -2,6 +2,8 @@
 # Otherwise, we cannot grant `allUsers` access to the bucket.
 
 resource "google_project_organization_policy" "domain_restricted_sharing" {
+  count = var.enable_public_exposure_demo ? 1 : 0
+
   project    = var.project_id
   constraint = "constraints/iam.allowedPolicyMemberDomains"
 

@@ -2,15 +2,24 @@
 #
 #   cp terraform.tfvars.example terraform.tfvars
 
+# All PoC resources live in this project. With folder_id set, Autokey uses delegated mode (keys here too).
 project_id            = "your-gcp-project-id"
 organization_id       = "your-organization-id"
-allowed_user_identity = "presenter@example.com"
+allowed_user_identity   = "presenter@example.com"
 
-# Optional: folder containing the project, for KMS Autokey (matches google_kms_autokey_config in kms.tf).
-# Omit or set null to skip Autokey folder config.
+# Folder containing project_id. Enables delegated Autokey (RESOURCE_PROJECT) + KeyHandles on BQ/GCS.
+# null = skip Autokey and KeyHandles (Google-managed encryption on datasets/buckets).
 folder_id = null
 
 # true = create a new org-level Access Context Manager policy for this PoC.
 # false = use an existing policy and set access_policy_id.
 create_access_policy = true
 access_policy_id     = ""
+
+# Optional: if Access Level / Perimeter names in GCP use a different suffix than random_id (import/drift).
+# vpc_sc_name_suffix = "a7aa3883"
+
+# PoC defaults: intentional public exposure + disposable resources. For stricter long-lived stacks:
+# enable_public_exposure_demo   = false
+# bucket_force_destroy          = false
+# bigquery_deletion_protection  = true

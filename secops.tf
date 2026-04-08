@@ -7,8 +7,14 @@ resource "google_bigquery_dataset" "secops_dashboard" {
   description   = "Dataset for storing security logs, specifically VPC Service Controls violations."
   location      = "US"
 
-  # For the PoC, we let Terraform destroy the dataset if needed
-  delete_contents_on_destroy = true
+  dynamic "default_encryption_configuration" {
+    for_each = local.autokey_keyhandles_enabled ? [1] : []
+    content {
+      kms_key_name = google_kms_key_handle.bq_secops_dashboard[0].kms_key
+    }
+  }
+
+  delete_contents_on_destroy = !var.bigquery_deletion_protection
 
   labels = {
     goog-terraform-provisioned = "true"
