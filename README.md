@@ -75,7 +75,7 @@ Use this section if you are cloning the repository into a **new** GCP organizati
 
 ### Configure variables
 
-1. `git clone <your-fork-or-repo-url>` and `cd` into the directory.
+1. `git clone https://github.com/GCP-Architecture-Guides/data-security.git` and `cd` into the `data-security` directory.
 2. Copy the example tfvars and edit values:
 
    ```bash
