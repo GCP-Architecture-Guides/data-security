@@ -69,7 +69,7 @@ Follow this "Story Arc" to present the architecture's value. This script demonst
 | :--- | :--- | :--- | :--- |
 | **1. The Vulnerability** | Show the `public-permissive-...` bucket permissions in the Console. | IAM shows `allUsers` has **Storage Object Viewer** (Public). | **The Risk:** Normally, this data is now leaked to the entire internet. |
 | **2. The Attack** | Open the Object URL in an **Incognito** window or a non-corporate network. | **403 Forbidden:** Access is denied by VPC Service Controls. | **The Save:** The network perimeter overrides the "Public" IAM mistake. |
-| **3. Approved Path** | Open the same URL from your **approved** session/corporate network. | **Success:** The CSV file downloads correctly. | Context-Aware Access allows verified users while blocking everyone else. |
+| **3. Approved Path** | Open the same URL from your **approved** session/corporate network. | **Success:** The CSV file downloads correctly. | Context-Aware Access allows verified users while blocking everyone else. Or user cloudshell gcloud storage cat gs://[FILE_PATH] |
 | **4. Auto-Encryption** | Check BigQuery Table Details -> Encryption. | Shows **Customer-Managed Key (CMEK)** via Autokey. | Encryption is automated and enforced, not left to manual configuration. |
 | **5. DLP Discovery** | Open **Sensitive Data Protection** in the Console. | Show the Inspect/De-identify templates created by Terraform. | The system classifies PII automatically without requiring manual toil. |
 | **6. Tokenization** | Run `SELECT *` on the `pii_dlp_tokenized` view. | `ssn_tokenized` shows deterministic tokens (e.g., `abc-123`). | Analysts can join data using tokens without seeing raw sensitive values. |
