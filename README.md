@@ -74,7 +74,7 @@ Follow this "Story Arc" to present the architecture's value. This script demonst
 | **5. DLP Discovery** | Open **Sensitive Data Protection** in the Console. | Show the Inspect/De-identify templates created by Terraform. | The system classifies PII automatically without requiring manual toil. |
 | **6. Tokenization** | Run `SELECT *` on the `pii_dlp_tokenized` view. | `ssn_tokenized` shows deterministic tokens (e.g., `abc-123`). | Analysts can join data using tokens without seeing raw sensitive values. |
 | **7. Policy Tags** | Remove your "Fine-Grained Reader" role and query the raw table. | Sensitive columns (SSN/CC) now appear as `NULL`. | Even with database access, you can't see what you aren't "cleared" for. |
-| **8. SecOps Audit** | Open the `secops_dashboard` dataset. | Show the audit logs of the blocked Phase 2 attack. | You have total visibility into who tried to breach the perimeter. |
+
 
 
 ## 🧹 Cleanup & Teardown
