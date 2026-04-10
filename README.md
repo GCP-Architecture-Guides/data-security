@@ -28,6 +28,7 @@ flowchart TD
     end
     
     VPC -.->|Allowed via Context| Admin[Approved Identity]
+```
 
 ## 🚀 Fast Track Deployment
 
