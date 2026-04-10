@@ -46,7 +46,7 @@ Ensure the identity running Terraform has the following roles at the **Organizat
 ### 3. Configure & Deploy
 1.  **Clone the repository:**
     ```bash
-    git clone [https://github.com/GCP-Architecture-Guides/data-security.git](https://github.com/GCP-Architecture-Guides/data-security.git)
+    git clone https://github.com/GCP-Architecture-Guides/data-security.git
     cd data-security
     ```
 2.  **Initialize variables:**
