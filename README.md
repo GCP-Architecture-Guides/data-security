@@ -1,8 +1,8 @@
-# 🛡️ Secure Data: The Invisible Data Perimeter
+# 🛡️ Secure data environments in Google Cloud
 
 ## Overview
 
-This repository contains a Terraform module to deploy the **"Secure Data: The Invisible Data Perimeter"** reference architecture. This Proof of Concept (PoC) demonstrates how to secure massive datasets containing Personally Identifiable Information (PII) against accidental exposure, internal misconfigurations, and external exfiltration.
+This repository contains a Terraform module to deploy the **"Secure data environments in Google Cloud"** reference architecture. This Proof of Concept (PoC) demonstrates how to secure massive datasets containing Personally Identifiable Information (PII) against accidental exposure, internal misconfigurations, and external exfiltration.
 
 Standard identity-based access control (IAM) is not enough to secure critical data. If a developer accidentally grants public access to a bucket or table, the data is exposed. This architecture addresses that risk head-on by creating **hard network perimeters** that explicitly **override** permissive IAM settings.
 
