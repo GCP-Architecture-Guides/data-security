@@ -19,12 +19,13 @@ Standard identity-based access control (IAM) is not enough to secure critical da
 ```mermaid
 flowchart TD
     User((User/Attacker)) -->|1. Internet Access| VPC[VPC Service Perimeter]
-    VPC -->|Blocked if Unapproved| BQ[(Secure BigQuery)]    
+    VPC -->|Blocked if Unapproved| BQ[(Secure BigQuery)]
+    VPC -->|Blocked if Unapproved| GCS[(Secure GCS Buckets)]    
     
     subgraph Inside Perimeter
     BQ --> DLP[DLP Tokenization View]
     BQ --> Tags[Data Catalog Policy Tags]
-    VPC -->|Blocked if Unapproved| GCS[(Secure GCS Buckets)]
+    GCS
     end
     
     VPC -.->|Allowed via Context| Admin[Approved Identity]
